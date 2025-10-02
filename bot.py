@@ -16,17 +16,18 @@ intents.members = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Конфигурация (ЗАМЕНИТЕ НА РЕАЛЬНЫЕ ID)
+# Конфигурация (ЗАМЕНИТЕ НА РЕАЛЬНЫЕ ID ВАШЕГО СЕРВЕРА)
 MODERATOR_ROLE_ID = 123456789012345678  # ID роли модератора
-LOG_CHANNEL_ID = 123456789012345679     # ID канала для логов
-PENDING_REQUESTS_CHANNEL_ID = 123456789012345680  # ID канала для заявок
+LOG_CHANNEL_ID = 1422205051153154118     # ID канала для логов
+PENDING_REQUESTS_CHANNEL_ID = 1422205095755645129  # ID канала для заявок
+STATS_CHANNEL_ID = 1422222709047300136   # ID канала для статистики
 
-# Словарь с ролями по организациям (ЗАМЕНИТЕ НА РЕАЛЬНЫЕ ID РОЛЕЙ)
+# Словарь с ролями по отделам (ЗАМЕНИТЕ НА РЕАЛЬНЫЕ ID РОЛЕЙ)
 ROLES_BY_ORGANIZATION = {
-    "Организация 1": [123456789012345681],
-    "Организация 2": [123456789012345682],
-    "Организация 3": [123456789012345683],
-    "Тестовая организация": [123456789012345684]
+    "Academy": [1409626655630168312],
+    "Police Academy": [1409626656150388837],
+    "MD": [1409626656150388836],
+    "Офицер Полиции": [1409626656150388835]
 }
 
 # Хранилища данных
@@ -37,28 +38,28 @@ class OrganizationSelect(ui.Select):
     def __init__(self):
         options = [
             discord.SelectOption(
-                label="Организация 1", 
-                description="Роли для Организации 1",
+                label="Academy", 
+                description="Роли для Academy",
                 emoji="🏢"
             ),
             discord.SelectOption(
-                label="Организация 2", 
-                description="Роли для Организации 2",
+                label="PA", 
+                description="Роли для Police Academy",
                 emoji="🏛️"
             ),
             discord.SelectOption(
-                label="Организация 3", 
-                description="Роли для Организации 3",
+                label="MD", 
+                description="Роли для MD",
                 emoji="🏬"
             ),
             discord.SelectOption(
-                label="Тестовая организация", 
-                description="Для тестирования бота",
+                label="Офицер Полиции", 
+                description="Для Офицера Полиции",
                 emoji="🧪"
             ),
         ]
         super().__init__(
-            placeholder="Выберите организацию",
+            placeholder="Выберите отдел",
             min_values=1,
             max_values=1,
             options=options,
@@ -125,7 +126,7 @@ class OrganizationSelect(ui.Select):
             timestamp=datetime.now()
         )
         embed.add_field(name="👤 Пользователь", value=f"{user.mention}\n{user}", inline=True)
-        embed.add_field(name="🏢 Организация", value=organization, inline=True)
+        embed.add_field(name="🏢 Отдел", value=organization, inline=True)
         embed.add_field(name="📅 Дата подачи", value=datetime.now().strftime("%d.%m.%Y %H:%M"), inline=True)
         embed.add_field(name="🆔 ID заявки", value=request_id, inline=False)
         
@@ -224,8 +225,11 @@ class ModerationView(ui.View):
             # Логируем действие
             await self.log_action(interaction, "approved", user)
             
+            # Отправляем статистику в канал статистики
+            await self.send_stats_to_channel(interaction, user, "approved")
+            
         else:
-            await interaction.response.send_message("❌ Организация не найдена!", ephemeral=True)
+            await interaction.response.send_message("❌ Отдел не найден!", ephemeral=True)
 
     @ui.button(label="❌ Отклонить", style=discord.ButtonStyle.danger, custom_id="reject")
     async def reject_button(self, interaction: discord.Interaction, button: ui.Button):
@@ -274,6 +278,9 @@ class ModerationView(ui.View):
         
         # Логируем действие
         await self.log_action(interaction, "rejected", user)
+        
+        # Отправляем статистику в канал статистики
+        await self.send_stats_to_channel(interaction, user, "rejected")
 
     @ui.button(label="📊 Запросить статистику", style=discord.ButtonStyle.primary, custom_id="request_stats")
     async def request_stats_button(self, interaction: discord.Interaction, button: ui.Button):
@@ -292,7 +299,8 @@ class ModerationView(ui.View):
             'moderator_id': interaction.user.id,
             'user_id': self.user_id,
             'timestamp': datetime.now(),
-            'request_id': self.request_id
+            'request_id': self.request_id,
+            'organization': self.organization
         }
         
         # Отправляем запрос пользователю
@@ -366,10 +374,60 @@ class ModerationView(ui.View):
             embed.add_field(name="Действие", value="Одобрено" if action == "approved" else "Отклонено", inline=True)
             embed.add_field(name="Модератор", value=interaction.user.mention, inline=True)
             embed.add_field(name="Пользователь", value=target_user.mention, inline=True)
-            embed.add_field(name="Организация", value=self.organization, inline=True)
+            embed.add_field(name="Отдел", value=self.organization, inline=True)
             embed.add_field(name="ID заявки", value=self.request_id, inline=False)
             
             await log_channel.send(embed=embed)
+
+    async def send_stats_to_channel(self, interaction, user, action):
+        """Отправляет статистику в канал статистики"""
+        stats_channel = interaction.guild.get_channel(STATS_CHANNEL_ID)
+        if not stats_channel:
+            return
+        
+        # Собираем статистику пользователя
+        join_date = user.joined_at.strftime("%d.%m.%Y %H:%M") if user.joined_at else "Неизвестно"
+        account_created = user.created_at.strftime("%d.%m.%Y")
+        account_age = (datetime.now().replace(tzinfo=None) - user.created_at.replace(tzinfo=None)).days
+        server_age = (datetime.now().replace(tzinfo=None) - user.joined_at.replace(tzinfo=None)).days if user.joined_at else 0
+        
+        # Считаем количество ролей (исключая @everyone)
+        role_count = len([role for role in user.roles if role.name != "@everyone"])
+        
+        embed = discord.Embed(
+            title=f"📈 Статистика заявки - {action.upper()}",
+            color=0x00ff00 if action == "approved" else 0xff0000,
+            timestamp=datetime.now()
+        )
+        
+        embed.add_field(name="👤 Пользователь", value=f"{user.mention}\n{user}", inline=True)
+        embed.add_field(name="🏢 Отдел", value=self.organization, inline=True)
+        embed.add_field(name="📊 Решение", value="✅ Одобрено" if action == "approved" else "❌ Отклонено", inline=True)
+        
+        embed.add_field(name="📅 На сервере с", value=join_date, inline=True)
+        embed.add_field(name="📅 Аккаунт создан", value=account_created, inline=True)
+        embed.add_field(name="🕒 Возраст аккаунта", value=f"{account_age} дней", inline=True)
+        
+        embed.add_field(name="👮 Модератор", value=interaction.user.mention, inline=True)
+        embed.add_field(name="🎭 Количество ролей", value=role_count, inline=True)
+        embed.add_field(name="🆔 ID заявки", value=self.request_id, inline=True)
+        
+        if action == "approved":
+            # Добавляем информацию о выданных ролях
+            role_names = []
+            for role_id in ROLES_BY_ORGANIZATION[self.organization]:
+                role = interaction.guild.get_role(role_id)
+                if role:
+                    role_names.append(role.name)
+            
+            if role_names:
+                embed.add_field(
+                    name="✅ Выданные роли",
+                    value=", ".join(role_names),
+                    inline=False
+                )
+        
+        await stats_channel.send(embed=embed)
 
 class UserStatsView(ui.View):
     def __init__(self, stat_request_id, moderator):
@@ -391,7 +449,7 @@ class UserStatsModal(ui.Modal, title='📊 Дополнительная инфо
 
     experience = ui.TextInput(
         label='Опыт в организации',
-        placeholder='Опишите ваш опыт работы или участия в подобных организациях...',
+        placeholder='Опишите ваш опыт работы или участия в подобных отделах...',
         style=discord.TextStyle.paragraph,
         max_length=500,
         required=True
@@ -416,6 +474,10 @@ class UserStatsModal(ui.Modal, title='📊 Дополнительная инфо
     async def on_submit(self, interaction: discord.Interaction):
         # Отправляем информацию модератору
         try:
+            # Получаем информацию о запросе
+            request_info = stat_requests.get(self.stat_request_id, {})
+            
+            # Отправляем модератору в ЛС
             mod_embed = discord.Embed(
                 title="📊 Получена статистика от пользователя",
                 color=0x00ff00,
@@ -429,7 +491,6 @@ class UserStatsModal(ui.Modal, title='📊 Дополнительная инфо
             if self.additional_info.value:
                 mod_embed.add_field(name="📝 Дополнительно", value=self.additional_info.value, inline=False)
             
-            # Отправляем модератору в ЛС
             try:
                 await self.moderator.send(embed=mod_embed)
             except:
@@ -440,6 +501,9 @@ class UserStatsModal(ui.Modal, title='📊 Дополнительная инфо
                         content=f"{self.moderator.mention}",
                         embed=mod_embed
                     )
+            
+            # Отправляем статистику в канал статистики
+            await self.send_stats_to_channel(interaction, request_info)
             
             # Подтверждаем пользователю
             confirm_embed = discord.Embed(
@@ -458,6 +522,37 @@ class UserStatsModal(ui.Modal, title='📊 Дополнительная инфо
                 "❌ Произошла ошибка при отправке информации. Попробуйте позже.",
                 ephemeral=True
             )
+
+    async def send_stats_to_channel(self, interaction, request_info):
+        """Отправляет статистику в канал статистики"""
+        stats_channel = interaction.guild.get_channel(STATS_CHANNEL_ID)
+        if not stats_channel:
+            return
+        
+        user = interaction.user
+        join_date = user.joined_at.strftime("%d.%m.%Y %H:%M") if user.joined_at else "Неизвестно"
+        account_age = (datetime.now().replace(tzinfo=None) - user.created_at.replace(tzinfo=None)).days
+        
+        embed = discord.Embed(
+            title="📊 Получена статистика от пользователя",
+            color=0x0099ff,
+            timestamp=datetime.now()
+        )
+        
+        embed.add_field(name="👤 Пользователь", value=f"{user.mention}\n{user}", inline=True)
+        embed.add_field(name="🏢 Отдел", value=request_info.get('organization', 'Неизвестно'), inline=True)
+        embed.add_field(name="📅 На сервере с", value=join_date, inline=True)
+        
+        embed.add_field(name="💼 Опыт", value=self.experience.value, inline=False)
+        embed.add_field(name="🎯 Мотивация", value=self.motivation.value, inline=False)
+        
+        if self.additional_info.value:
+            embed.add_field(name="📝 Дополнительная информация", value=self.additional_info.value, inline=False)
+        
+        embed.add_field(name="👮 Запросил модератор", value=self.moderator.mention, inline=True)
+        embed.add_field(name="🆔 ID запроса", value=self.stat_request_id, inline=True)
+        
+        await stats_channel.send(embed=embed)
 
 class RemoveRolesButton(ui.Button):
     def __init__(self):
@@ -490,6 +585,20 @@ class RemoveRolesButton(ui.Button):
                 value="\n".join(removed_roles),
                 inline=False
             )
+            
+            # Отправляем в канал статистики
+            stats_channel = interaction.guild.get_channel(STATS_CHANNEL_ID)
+            if stats_channel:
+                stats_embed = discord.Embed(
+                    title="🗑️ Пользователь снял роли",
+                    color=0xffa500,
+                    timestamp=datetime.now()
+                )
+                stats_embed.add_field(name="👤 Пользователь", value=f"{user.mention}\n{user}", inline=True)
+                stats_embed.add_field(name="📅 Время", value=datetime.now().strftime("%d.%m.%Y %H:%M"), inline=True)
+                stats_embed.add_field(name="🎭 Снятые роли", value=", ".join(removed_roles), inline=False)
+                await stats_channel.send(embed=stats_embed)
+                
         else:
             embed = discord.Embed(
                 title="ℹ️ Роли не найдены",
@@ -510,7 +619,22 @@ class CancelButton(ui.Button):
     async def callback(self, interaction: discord.Interaction):
         # Удаляем pending заявку если есть
         if interaction.user.id in pending_requests:
+            request_data = pending_requests[interaction.user.id]
             del pending_requests[interaction.user.id]
+            
+            # Отправляем в канал статистики
+            stats_channel = interaction.guild.get_channel(STATS_CHANNEL_ID)
+            if stats_channel:
+                embed = discord.Embed(
+                    title="❌ Пользователь отменил заявку",
+                    color=0xff0000,
+                    timestamp=datetime.now()
+                )
+                embed.add_field(name="👤 Пользователь", value=f"{interaction.user.mention}\n{interaction.user}", inline=True)
+                embed.add_field(name="🏢 Отдел", value=request_data['organization'], inline=True)
+                embed.add_field(name="📅 Время подачи", value=request_data['timestamp'].strftime("%d.%m.%Y %H:%M"), inline=True)
+                embed.add_field(name="⏰ Время отмены", value=datetime.now().strftime("%H:%M"), inline=True)
+                await stats_channel.send(embed=embed)
         
         embed = discord.Embed(
             title="❌ Запрос отменен",
@@ -528,8 +652,9 @@ class RoleRequestView(ui.View):
 
 @bot.event
 async def on_ready():
-    print(f'Бот {bot.user.name} успешно запущен!')
-    print(f'ID бота: {bot.user.id}')
+    print(f'✅ Бот {bot.user.name} успешно запущен!')
+    print(f'🆔 ID бота: {bot.user.id}')
+    print(f'📊 Серверов: {len(bot.guilds)}')
     print('------')
     
     # Добавляем персистентное view
@@ -571,6 +696,46 @@ async def setup_roles(ctx):
     await ctx.send(embed=embed, view=RoleRequestView())
     await ctx.message.delete()
 
+@bot.command(name='статистика')
+@commands.has_permissions(administrator=True)
+async def show_stats(ctx):
+    """Показывает общую статистику системы"""
+    pending_count = sum(1 for req in pending_requests.values() if req['status'] == 'pending')
+    approved_count = sum(1 for req in pending_requests.values() if req['status'] == 'approved')
+    rejected_count = sum(1 for req in pending_requests.values() if req['status'] == 'rejected')
+    stat_requests_count = len(stat_requests)
+    
+    # Статистика по отделам
+    org_stats = {}
+    for request in pending_requests.values():
+        org = request['organization']
+        if org not in org_stats:
+            org_stats[org] = {'total': 0, 'approved': 0, 'rejected': 0, 'pending': 0}
+        org_stats[org]['total'] += 1
+        org_stats[org][request['status']] += 1
+    
+    embed = discord.Embed(
+        title="📈 Общая статистика системы",
+        color=0x7289da,
+        timestamp=datetime.now()
+    )
+    
+    embed.add_field(name="⏳ Ожидают рассмотрения", value=pending_count, inline=True)
+    embed.add_field(name="✅ Одобрено", value=approved_count, inline=True)
+    embed.add_field(name="❌ Отклонено", value=rejected_count, inline=True)
+    embed.add_field(name="📊 Активных запросов статистики", value=stat_requests_count, inline=True)
+    embed.add_field(name="📋 Всего заявок", value=len(pending_requests), inline=True)
+    
+    # Добавляем статистику по отделам
+    if org_stats:
+        org_text = ""
+        for org, stats in list(org_stats.items())[:5]:  # Показываем первые 5
+            org_text += f"**{org}**: {stats['total']} (✅{stats['approved']} ⏳{stats['pending']} ❌{stats['rejected']})\n"
+        
+        embed.add_field(name="🏢 Статистика по отделам", value=org_text, inline=False)
+    
+    await ctx.send(embed=embed)
+
 @bot.command(name='заявки')
 @commands.has_permissions(administrator=True)
 async def show_requests(ctx):
@@ -604,111 +769,31 @@ async def show_requests(ctx):
     
     await ctx.send(embed=embed)
 
-@bot.command(name='очистить_заявки')
-@commands.has_permissions(administrator=True)
-async def clear_old_requests(ctx, days: int = 7):
-    """Очищает старые заявки"""
-    cutoff_date = datetime.now().timestamp() - (days * 24 * 60 * 60)
-    removed_count = 0
-    
-    for user_id in list(pending_requests.keys()):
-        request = pending_requests[user_id]
-        if request['timestamp'].timestamp() < cutoff_date:
-            del pending_requests[user_id]
-            removed_count += 1
-    
-    embed = discord.Embed(
-        title="🗑️ Очистка заявок",
-        description=f"Удалено {removed_count} заявок старше {days} дней.",
-        color=0x00ff00
-    )
-    await ctx.send(embed=embed)
-
-@bot.command(name='очистить_статистику')
-@commands.has_permissions(administrator=True)
-async def clear_old_stats(ctx, hours: int = 24):
-    """Очищает старые запросы статистики"""
-    cutoff_time = datetime.now().timestamp() - (hours * 60 * 60)
-    removed_count = 0
-    
-    for stat_id in list(stat_requests.keys()):
-        request = stat_requests[stat_id]
-        if request['timestamp'].timestamp() < cutoff_time:
-            del stat_requests[stat_id]
-            removed_count += 1
-    
-    embed = discord.Embed(
-        title="🗑️ Очистка запросов статистики",
-        description=f"Удалено {removed_count} запросов старше {hours} часов.",
-        color=0x00ff00
-    )
-    await ctx.send(embed=embed)
-
-@bot.command(name='добавить_организацию')
-@commands.has_permissions(administrator=True)
-async def add_organization(ctx, название: str, *роли: discord.Role):
-    """Добавляет новую организацию в систему"""
-    if название in ROLES_BY_ORGANIZATION:
-        await ctx.send("❌ Эта организация уже существует!")
-        return
-    
-    role_ids = [role.id for role in роли]
-    ROLES_BY_ORGANIZATION[название] = role_ids
-    
-    embed = discord.Embed(
-        title="✅ Организация добавлена!",
-        description=f"Организация **{название}** добавлена в систему.",
-        color=0x00ff00
-    )
-    embed.add_field(
-        name="Добавленные роли:",
-        value="\n".join([role.mention for role in роли]),
-        inline=False
-    )
-    
-    await ctx.send(embed=embed)
-
-@bot.command(name='список_организаций')
-@commands.has_permissions(administrator=True)
-async def list_organizations(ctx):
-    """Показывает список всех организаций"""
-    embed = discord.Embed(
-        title="🏢 Список организаций",
-        color=0x7289da
-    )
-    
-    for org_name, role_ids in ROLES_BY_ORGANIZATION.items():
-        roles = []
-        for role_id in role_ids:
-            role = ctx.guild.get_role(role_id)
-            if role:
-                roles.append(role.name)
-        
-        embed.add_field(
-            name=org_name,
-            value=", ".join(roles) if roles else "Роли не настроены",
-            inline=False
-        )
-    
-    await ctx.send(embed=embed)
-
 # Фоновая задача для очистки старых данных
 @tasks.loop(hours=24)
 async def cleanup_old_data():
     """Очищает старые заявки и запросы статистики"""
     current_time = datetime.now().timestamp()
+    removed_requests = 0
+    removed_stats = 0
     
     # Очищаем старые заявки (старше 7 дней)
     for user_id in list(pending_requests.keys()):
         request = pending_requests[user_id]
         if request['timestamp'].timestamp() < current_time - (7 * 24 * 60 * 60):
             del pending_requests[user_id]
+            removed_requests += 1
     
     # Очищаем старые запросы статистики (старше 24 часов)
     for stat_id in list(stat_requests.keys()):
         request = stat_requests[stat_id]
         if request['timestamp'].timestamp() < current_time - (24 * 60 * 60):
             del stat_requests[stat_id]
+            removed_stats += 1
+    
+    # Логируем очистку
+    if removed_requests > 0 or removed_stats > 0:
+        print(f"🧹 Автоочистка: удалено {removed_requests} заявок и {removed_stats} запросов статистики")
 
 @cleanup_old_data.before_loop
 async def before_cleanup():
@@ -722,6 +807,10 @@ async def on_connect():
 if __name__ == "__main__":
     token = os.getenv('DISCORD_TOKEN')
     if token:
+        print("🔧 Запуск бота...")
         bot.run(token)
     else:
-        print("Ошибка: Токен не найден! Убедитесь, что файл .env существует и содержит DISCORD_TOKEN")
+        print("❌ Ошибка: Токен не найден!")
+        print("📝 Создайте файл .env с содержимым:")
+        print("DISCORD_TOKEN=your_bot_token_here")
+        print("🔗 Получите токен на https://discord.com/developers/applications")
